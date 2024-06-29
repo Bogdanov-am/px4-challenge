@@ -4,4 +4,4 @@
     aruco_dictionary_id: DICT_4X4_100
     image_topic: /camera
     camera_info_topic: /camera_info
-    camera_frame: x500_mono_cam_0/mono_cam/base_link/imager
+    camera_frame: x500_mono_cam_0/mono_cam/base_link/imager 

@@ -6,12 +6,13 @@ import os
 
 def generate_launch_description():
     bridges = [image(), camera_info()]
-    
+    package_dir = get_package_share_directory('px4_challenge')
     aruco_params = os.path.join(
-        get_package_share_directory('px4_challenge'),
+        package_dir,
         'config',
         'aruco_parameters.yaml'
         )
+    rviz_config = os.path.join(package_dir, 'visualize.rviz')
     
     return LaunchDescription([
         Node(
@@ -27,14 +28,21 @@ def generate_launch_description():
             parameters=[aruco_params]
         ),
         Node(
-            package='px4_challenge',
-            namespace='px4_challenge',
-            executable='visualizer',
-            name='visualizer'
-        ),
-        Node(
             package='tf2_ros',
             executable='static_transform_publisher',
             arguments = ['0', '0', '0', '1.5707963', '3.14159', '0.0', 'vehicle', 'x500_mono_cam_0/mono_cam/base_link/imager']
         ),
+        Node(
+            package='px4_challenge',
+            namespace='',
+            executable='pose_publisher',
+            name='pose_publisher'
+        ),
+        Node(
+            package='rviz2',
+            namespace='',
+            executable='rviz2',
+            name='rviz2',
+            arguments=['-d', [rviz_config]]
+        )
     ])

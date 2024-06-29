@@ -27,7 +27,8 @@ setup(
     tests_require=['pytest'],
     entry_points={
         'console_scripts': [
-            'visualizer = px4_challenge.visualizer:main',
+            'pose_publisher = px4_challenge.pose_publisher:main',
+            'target_follower = px4_challenge.target_follower:main'
         ],
     },
 )

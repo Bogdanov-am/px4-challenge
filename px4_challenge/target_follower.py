@@ -1,118 +1,151 @@
-#!/usr/bin/env python
-############################################################################
-#
-#   Copyright (C) 2022 PX4 Development Team. All rights reserved.
-#
-# Redistribution and use in source and binary forms, with or without
-# modification, are permitted provided that the following conditions
-# are met:
-#
-# 1. Redistributions of source code must retain the above copyright
-#    notice, this list of conditions and the following disclaimer.
-# 2. Redistributions in binary form must reproduce the above copyright
-#    notice, this list of conditions and the following disclaimer in
-#    the documentation and/or other materials provided with the
-#    distribution.
-# 3. Neither the name PX4 nor the names of its contributors may be
-#    used to endorse or promote products derived from this software
-#    without specific prior written permission.
-#
-# THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
-# "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
-# LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS
-# FOR A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE
-# COPYRIGHT OWNER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT,
-# INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING,
-# BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS
-# OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED
-# AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT
-# LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN
-# ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
-# POSSIBILITY OF SUCH DAMAGE.
-#
-############################################################################
-
-
 import rclpy
 import numpy as np
 from rclpy.node import Node
 from rclpy.clock import Clock
 from rclpy.qos import QoSProfile, QoSReliabilityPolicy, QoSHistoryPolicy, QoSDurabilityPolicy
+from geometry_msgs.msg import PoseArray, Pose
 
 from px4_msgs.msg import OffboardControlMode
 from px4_msgs.msg import TrajectorySetpoint
 from px4_msgs.msg import VehicleStatus
 
+from tf2_ros import TransformException
+from tf2_ros.buffer import Buffer
+from tf2_ros.transform_listener import TransformListener
+import tf2_geometry_msgs
 
-class OffboardControl(Node):
+from filterpy.kalman import KalmanFilter
+
+class TargetFollower(Node):
 
     def __init__(self):
-        super().__init__('minimal_publisher')
+        super().__init__('target_follower')
         qos_profile = QoSProfile(
             reliability=QoSReliabilityPolicy.BEST_EFFORT,
             durability=QoSDurabilityPolicy.TRANSIENT_LOCAL,
             history=QoSHistoryPolicy.KEEP_LAST,
             depth=1
         )
-
+        # Подписка на состояние автопилота
         self.status_sub = self.create_subscription(
             VehicleStatus,
             '/fmu/out/vehicle_status',
             self.vehicle_status_callback,
             qos_profile)
+        
+        # Паблишер оповещения автопилота о наличии offboard управления
         self.publisher_offboard_mode = self.create_publisher(OffboardControlMode, '/fmu/in/offboard_control_mode', qos_profile)
+        # Паблишер установки целевой траектории (в данном примере только положения)
         self.publisher_trajectory = self.create_publisher(TrajectorySetpoint, '/fmu/in/trajectory_setpoint', qos_profile)
-        timer_period = 0.02  # seconds
-        self.timer = self.create_timer(timer_period, self.cmdloop_callback)
-        self.dt = timer_period
-        self.declare_parameter('radius', 10.0)
-        self.declare_parameter('omega', 5.0)
-        self.declare_parameter('altitude', 5.0)
+        
+        self.tf_buffer = Buffer()
+        self.tf_listener = TransformListener(self.tf_buffer, self)
+        
+        self.aruco_sub = self.create_subscription(
+            PoseArray,
+            '/aruco_poses',
+            self.aruco_pose_callback,
+            10)
+        self.target = None
+        
+        self.declare_parameter('radius', 4.0)
+        self.declare_parameter('omega', 0.5)
+        self.declare_parameter('altitude', 8.0)
         self.nav_state = VehicleStatus.NAVIGATION_STATE_MAX
         self.arming_state = VehicleStatus.ARMING_STATE_DISARMED
-        # Note: no parameter callbacks are used to prevent sudden inflight changes of radii and omega 
-        # which would result in large discontinuities in setpoints
+        
         self.theta = 0.0
         self.radius = self.get_parameter('radius').value
         self.omega = self.get_parameter('omega').value
         self.altitude = self.get_parameter('altitude').value
         self.new_altitude = float(self.altitude)
+        
+        timer_period = 0.02  # seconds
+        self.dt = timer_period
+        self.timer = self.create_timer(timer_period, self.cmdloop_callback)
+        
+        self.filter = KalmanFilter(6, 3)
+        self.filter.x = np.array([0., 0., 0., 0., 0., 0.])
+        self.filter.F = np.asarray(
+            [
+                [1., 0., 0., 1., 0., 0.],
+                [0., 1., 0., 0., 1., 0.],
+                [0., 0., 1., 0., 0., 1.],
+                [0., 0., 0., 1., 0., 0.],
+                [0., 0., 0., 0., 1., 0.],
+                [0., 0., 0., 0., 0., 1.]
+            ]
+        )
+        self.filter.H = np.array([
+            [1., 0., 0., 0., 0., 0.],
+            [0., 1., 0., 0., 0., 0.],
+            [0., 0., 1., 0., 0., 0.]
+        ])
+        self.filter.P *= 1000
+        self.filter.R *= 100
+        from filterpy.common import Q_discrete_white_noise
+        self.filter.Q = Q_discrete_white_noise(2, dt=0.05, var=30., block_size=3)
  
     def vehicle_status_callback(self, msg):
         # TODO: handle NED->ENU transformation
-        print("NAV_STATUS: ", msg.nav_state)
-        print("  - offboard status: ", VehicleStatus.NAVIGATION_STATE_OFFBOARD)
+        self._logger.debug(f"NAV_STATUS: {msg.nav_state}")
+        self._logger.debug(f"  - offboard status: {VehicleStatus.NAVIGATION_STATE_OFFBOARD}")
         self.nav_state = msg.nav_state
         self.arming_state = msg.arming_state
 
-    def cmdloop_callback(self):
-        # Publish offboard control modes
+    def aruco_pose_callback(self, msg: PoseArray):
+        if len(msg.poses):
+            try:
+                t1 = self.tf_buffer.lookup_transform('vehicle', 'x500_mono_cam_0/mono_cam/base_link/imager', rclpy.time.Time())
+                target = tf2_geometry_msgs.do_transform_pose(msg.poses[0], t1)
+                t2 = self.tf_buffer.lookup_transform('map', 'vehicle', rclpy.time.Time())
+                target = tf2_geometry_msgs.do_transform_pose(target, t2)
+               
+                self.filter.predict()
+                self.filter.update(np.array([target.position.x, target.position.y, target.position.z]))
+                self.target = self.filter.x
+            except TransformException as ex:
+                self.get_logger().warn(f'Could not transform')
+        else:
+            self.target = None
+        
+    def send_offboard_mode(self):
         offboard_msg = OffboardControlMode()
         offboard_msg.timestamp = int(Clock().now().nanoseconds / 1000)
         offboard_msg.position=True
         offboard_msg.velocity=False
         offboard_msg.acceleration=False
         self.publisher_offboard_mode.publish(offboard_msg)
-        if (self.nav_state == VehicleStatus.NAVIGATION_STATE_OFFBOARD and self.arming_state == VehicleStatus.ARMING_STATE_ARMED):
-
+    
+    
+    def cmdloop_callback(self):
+        self.send_offboard_mode()
+        if self.target is not None:
+            self.get_logger().debug(f'Target coordinate: {self.target[0]} {self.target[1]} {self.target[2]}')
+        else:
+            return    
+        
+        if (self.nav_state == VehicleStatus.NAVIGATION_STATE_OFFBOARD and 
+            self.arming_state == VehicleStatus.ARMING_STATE_ARMED):
+            # pass
             trajectory_msg = TrajectorySetpoint()
-            trajectory_msg.position[0] = self.radius * np.cos(self.theta)
-            trajectory_msg.position[1] = self.radius * np.sin(self.theta)
-            trajectory_msg.position[2] = -self.new_altitude
+            trajectory_msg.position[0] = self.target[0] + self.radius * np.cos(self.theta) * (1 - np.cos(self.theta / 10)) / 2
+            trajectory_msg.position[1] = - self.target[1] + self.radius * np.sin(self.theta) * (1 - np.cos(self.theta / 10)) /2
+            trajectory_msg.position[2] = - self.target[2] + -self.new_altitude
             self.publisher_trajectory.publish(trajectory_msg)
 
-            self.new_altitude = self.new_altitude + 0.005
+            self.new_altitude = self.new_altitude
             self.theta = self.theta + self.omega * self.dt
 
 
 def main(args=None):
     rclpy.init(args=args)
 
-    offboard_control = OffboardControl()
+    target_follower = TargetFollower()
 
-    rclpy.spin(offboard_control)
+    rclpy.spin(target_follower)
 
-    offboard_control.destroy_node()
+    target_follower.destroy_node()
     rclpy.shutdown()
 
 

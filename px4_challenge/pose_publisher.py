@@ -1,41 +1,3 @@
-#!/usr/bin/env python
-############################################################################
-#
-#   Copyright (C) 2022 PX4 Development Team. All rights reserved.
-#
-# Redistribution and use in source and binary forms, with or without
-# modification, are permitted provided that the following conditions
-# are met:
-#
-# 1. Redistributions of source code must retain the above copyright
-#    notice, this list of conditions and the following disclaimer.
-# 2. Redistributions in binary form must reproduce the above copyright
-#    notice, this list of conditions and the following disclaimer in
-#    the documentation and/or other materials provided with the
-#    distribution.
-# 3. Neither the name PX4 nor the names of its contributors may be
-#    used to endorse or promote products derived from this software
-#    without specific prior written permission.
-#
-# THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
-# "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
-# LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS
-# FOR A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE
-# COPYRIGHT OWNER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT,
-# INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING,
-# BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS
-# OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED
-# AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT
-# LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN
-# ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
-# POSSIBILITY OF SUCH DAMAGE.
-#
-############################################################################
-
-__author__ = "Jaeyoung Lim"
-__contact__ = "jalim@ethz.ch"
-
-from re import M
 import numpy as np
 
 import rclpy
@@ -66,9 +28,9 @@ def vector2PoseMsg(frame_id, position, attitude):
     return pose_msg
 
 
-class PX4Visualizer(Node):
+class PosePublisher(Node):
     def __init__(self):
-        super().__init__("visualizer")
+        super().__init__("pose_publisher")
 
         # Configure subscritpions
         qos_profile = QoSProfile(
@@ -104,9 +66,6 @@ class PX4Visualizer(Node):
         )
         self.vehicle_vel_pub = self.create_publisher(
             Marker, "/px4_visualizer/vehicle_velocity", 10
-        )
-        self.aruco_pub = self.create_publisher(
-            Marker, "/px4_visualizer/aruco", 10
         )
         self.vehicle_path_pub = self.create_publisher(
             Path, "/px4_visualizer/vehicle_path", 10
@@ -177,26 +136,6 @@ class PX4Visualizer(Node):
         msg.points = [tail_point, head_point]
         return msg
 
-    def create_marker(self, id, pos):
-        msg = Marker()
-        msg.action = Marker.MODIFY
-        msg.header.frame_id = "map"
-        # msg.header.stamp = Clock().now().nanoseconds / 1000
-        msg.ns = "arrow"
-        msg.id = id
-        msg.type = Marker.CUBE
-        msg.scale.x = 1.0
-        msg.scale.y = 1.0
-        msg.scale.z = 0.05
-        msg.color.r = 0.5
-        msg.color.g = 0.5
-        msg.color.b = 0.0
-        msg.color.a = 1.0
-        msg.pose.position.x = pos[0]
-        msg.pose.position.y = pos[1]
-        msg.pose.position.z = pos[2]
-        return msg
-
     def append_vehicle_path(self, msg):
         self.vehicle_path_msg.poses.append(msg)
         if len(self.vehicle_path_msg.poses) > self.trail_size:
@@ -241,18 +180,15 @@ class PX4Visualizer(Node):
         velocity_msg = self.create_arrow_marker(1, self.vehicle_local_position, self.vehicle_local_velocity)
         self.vehicle_vel_pub.publish(velocity_msg)
         
-        # Publish aruco marker
-        aruco_msg = self.create_marker(2, np.array([36, -137, 0.0]))
-        self.aruco_pub.publish(aruco_msg)
 
 def main(args=None):
     rclpy.init(args=args)
 
-    px4_visualizer = PX4Visualizer()
+    pose_publisher = PosePublisher()
 
-    rclpy.spin(px4_visualizer)
+    rclpy.spin(pose_publisher)
 
-    px4_visualizer.destroy_node()
+    pose_publisher.destroy_node()
     rclpy.shutdown()
 
 
