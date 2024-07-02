@@ -44,5 +44,11 @@ def generate_launch_description():
             executable='rviz2',
             name='rviz2',
             arguments=['-d', [rviz_config]]
+        ),
+        Node(
+            package='px4_challenge',
+            namespace='',
+            executable='target_follower',
+            name='target_follower'
         )
     ])
