@@ -82,9 +82,9 @@ class TargetFollower(Node):
             [0., 0., 1., 0., 0., 0.]
         ])
         self.filter.P *= 1000
-        self.filter.R *= 100
+        self.filter.R *= 500
         from filterpy.common import Q_discrete_white_noise
-        self.filter.Q = Q_discrete_white_noise(2, dt=0.05, var=50., block_size=3)
+        self.filter.Q = Q_discrete_white_noise(2, dt=0.05, var=5., block_size=3)
  
     def vehicle_status_callback(self, msg):
         # TODO: handle NED->ENU transformation

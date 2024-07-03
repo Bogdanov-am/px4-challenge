@@ -1,1 +1,4 @@
 filterpy==1.4.5
+transforms3d==0.4.2
+opencv-contrib-python==4.6.0.66
+cv-bridge==3.2.1
