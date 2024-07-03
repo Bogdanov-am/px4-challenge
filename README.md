@@ -3,6 +3,7 @@
 [![PX4-Gazebo Aruco Challenge](https://img.youtube.com/vi/25MkysUniwA/0.jpg)](https://www.youtube.com/watch?v=25MkysUniwA "Video Demonstration")
 
 ## Подготовка
+Проверялось на Ubuntu 22.04.4 LTS с Python 3.10.12
 
 1. Установить ROS2 по [инструкции](https://docs.ros.org/en/humble/Installation/Ubuntu-Install-Debians.html)
 2. Установить Gazebo по [инструкции](https://gazebosim.org/docs/harmonic/install_ubuntu)
@@ -15,7 +16,7 @@ make px4_sitl gz_x500_mono_cam_baylands
 ```
 sudo snap install micro-xrce-dds-agent --edge
 ```
-6. Создать workspace, установить и собрать зависимости
+6. Создать workspace, установить и собрать пакеты
 ```
 mkdir aruco_ws
 cd aruco_ws
@@ -26,7 +27,11 @@ git clone https://github.com/Bogdanov-am/ros2_aruco
 git clone https://github.com/PX4/px4_msgs
 cd ..
 colcon build
-
+```
+7. Установить python зависимости 
+```
+cd src/px4-challenge
+python3 -m pip install -r requirements.txt
 ```
 ## Запуск
 1. Запустить QGroundControl
